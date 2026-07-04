@@ -9,6 +9,7 @@ Kaptan AI is a cloud-native restaurant reservation platform that enables custome
 ## 🚀 Live Demo
 
 🌐 **Frontend:** https://main.d2knn50087pxtx.amplifyapp.com/
+
 🌐 **Telegram Bot Url:** https://t.me/ABCPizzeriaReservationBot
 
 ---

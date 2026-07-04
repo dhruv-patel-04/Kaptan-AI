@@ -215,7 +215,7 @@ Configure:
 - Telegram Bot
 - Amplify
 
-**Detailed Setup Guide:** [docs/setup-guide.md](docs/README.md)
+**Detailed Setup Guide:** [docs/README.md](docs/README.md)
 
 ---
 

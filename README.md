@@ -161,9 +161,11 @@ Kaptan-AI
 
 ---
 
-### Telegram Reservation
+### Telegram Reservation, Rescheduling, Cancellation
 
 ![Telegram](screenshots/telegram-booking.png)
+
+![Telegram](screenshots/telegram-reschedule-cancel.png)
 
 ---
 
@@ -213,7 +215,7 @@ Configure:
 - Telegram Bot
 - Amplify
 
-Detailed setup instructions are available in the `docs/` directory.
+**Complete Deployment Guide:** [docs/setup-guide.md](docs/setup-guide.md)
 
 ---
 

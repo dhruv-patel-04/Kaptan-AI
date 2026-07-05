@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Kaptan AI Banner.png" alt="Kaptan AI Banner">
+</p>
+
 # Kaptan AI
 
 > **Serverless AI-Powered Restaurant Reservation Bot with Table Management Dashboard**

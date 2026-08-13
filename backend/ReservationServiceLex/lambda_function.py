@@ -1,4 +1,5 @@
 import json
+import re
 import boto3
 from datetime import datetime, timedelta
 
@@ -20,7 +21,14 @@ def lambda_handler(event, context):
         # -------- Lex --------
 
         if "sessionState" in event:
+
+            # Dialog Code Hook
+            if event.get("invocationSource") == "DialogCodeHook":
+                return handle_dialog_code_hook(event)
+
+            # Fulfillment Code Hook
             return handle_lex_request(event)
+
 
         # -------- API Gateway --------
 
@@ -148,6 +156,10 @@ def close_lex(intent_name, state, message):
 
 def elicit_slot(intent_name, slots, slot_name, message):
 
+    # Clear the invalid slot so Lex asks for a fresh value
+    updated_slots = slots.copy()
+    updated_slots[slot_name] = None
+
     return {
         "sessionState": {
             "dialogAction": {
@@ -156,7 +168,7 @@ def elicit_slot(intent_name, slots, slot_name, message):
             },
             "intent": {
                 "name": intent_name,
-                "slots": slots,
+                "slots": updated_slots,
                 "state": "InProgress"
             }
         },
@@ -167,6 +179,112 @@ def elicit_slot(intent_name, slots, slot_name, message):
             }
         ]
     }
+
+
+def handle_dialog_code_hook(event):
+
+    try:
+
+        intent_name = event["sessionState"]["intent"]["name"]
+        slots = event["sessionState"]["intent"]["slots"]
+
+        # Only validate booking intent
+        if intent_name != "BookReservationIntent":
+
+            return {
+                "sessionState": {
+                    "dialogAction": {
+                        "type": "Delegate"
+                    },
+                    "intent": {
+                        "name": intent_name,
+                        "slots": slots,
+                        "state": "InProgress"
+                    }
+                }
+            }
+
+        # ---------------------------------------------
+        # Validate number of people
+        # ---------------------------------------------
+
+        persons_slot = slots.get("persons")
+
+        # User has not provided persons yet.
+        # Let Lex continue asking for it.
+        if not persons_slot or not persons_slot.get("value"):
+
+            return {
+                "sessionState": {
+                    "dialogAction": {
+                        "type": "Delegate"
+                    },
+                    "intent": {
+                        "name": intent_name,
+                        "slots": slots,
+                        "state": "InProgress"
+                    }
+                }
+            }
+
+        try:
+
+            persons = int(
+                persons_slot["value"]["interpretedValue"]
+            )
+
+        except (TypeError, ValueError):
+
+            return elicit_slot(
+                intent_name,
+                slots,
+                "persons",
+                "Please enter a valid number of people."
+            )
+
+        # ---------------------------------------------
+        # Reject zero / negative values
+        # ---------------------------------------------
+
+        if persons <= 0:
+
+            return elicit_slot(
+                intent_name,
+                slots,
+                "persons",
+                "Number of people must be greater than 0. Please enter a valid number."
+            )
+
+        # ---------------------------------------------
+        # Valid persons
+        # Let Lex continue normally
+        # ---------------------------------------------
+
+        return {
+            "sessionState": {
+                "dialogAction": {
+                    "type": "Delegate"
+                },
+                "intent": {
+                    "name": intent_name,
+                    "slots": slots,
+                    "state": "InProgress"
+                }
+            }
+        }
+
+    except Exception as e:
+
+        print("DIALOG CODE HOOK ERROR")
+        print(str(e))
+
+        return {
+            "sessionState": {
+                "dialogAction": {
+                    "type": "Delegate"
+                }
+            }
+        }
 
 
 def lex_book_reservation(event):
@@ -187,14 +305,70 @@ def lex_book_reservation(event):
 
         body = json.loads(result["body"])
 
+        # ---------------------------------------------
+        # Booking failed
+        # ---------------------------------------------
+
         if result["statusCode"] != 200:
 
+            message = str(body)
+
+            # Restaurant closed
+            if "Restaurant is closed" in message:
+
+                return close_lex(
+                    "BookReservationIntent",
+                    "Failed",
+                    message
+                )
+
+            # Mobile validation
+            if "10-digit mobile" in message:
+
+                return elicit_slot(
+                    "BookReservationIntent",
+                    slots,
+                    "mobileNumber",
+                    message
+                )
+
+            # Name validation
+            if "Customer name" in message:
+
+                return elicit_slot(
+                    "BookReservationIntent",
+                    slots,
+                    "customerName",
+                    message
+                )
+
+            # Number of people / availability
+            if (
+                "number of people" in message
+                or
+                "reservation for" in message
+                or
+                "tables are available" in message
+            ):
+
+                return elicit_slot(
+                    "BookReservationIntent",
+                    slots,
+                    "persons",
+                    message
+                )
+
+            # Time validation
             return elicit_slot(
                 "BookReservationIntent",
                 slots,
                 "ReservationTime",
-                str(body)
+                message
             )
+
+        # ---------------------------------------------
+        # Successful booking
+        # ---------------------------------------------
 
         return close_lex(
             "BookReservationIntent",
@@ -214,10 +388,13 @@ def lex_book_reservation(event):
 
     except Exception as e:
 
+        print("BOOKING ERROR")
+        print(str(e))
+
         return close_lex(
             "BookReservationIntent",
             "Failed",
-            str(e)
+            "Sorry, something went wrong while booking your reservation."
         )
 
 
@@ -605,26 +782,140 @@ def allocate_tables(persons, free_tables):
     return allocated
 
 
+def get_max_available_persons(free_tables):
+
+    max_persons = 0
+
+    for table in free_tables:
+
+        if table["tableType"] == "T2":
+            max_persons += int(table["capacity"])
+
+        elif table["tableType"] == "T4":
+            max_persons += int(table["capacity"])
+
+    return max_persons
+
+
 def book_reservation(event):
 
+    # -------------------------------------------------
+    # Restaurant status
+    # -------------------------------------------------
+
+    config = get_restaurant_config()
+
+    if not config["isOpen"]:
+
+        return response(
+            400,
+            "Restaurant is closed today. No reservations are being accepted."
+        )
+
+    # -------------------------------------------------
+    # Basic input
+    # -------------------------------------------------
+
     slot = event.get("slot")
+
+    if not slot:
+
+        return response(
+            400,
+            "Reservation time is required."
+        )
 
     valid, message = validate_reservation_time(slot)
 
     if not valid:
-        return response(400, message)
 
-    persons = int(event.get("persons", 0))
-    customer_name = event.get("customerName")
-    mobile = event.get("mobile")
+        return response(
+            400,
+            message
+        )
 
-    if not slot:
-        return response(400, "Slot required")
+    # -------------------------------------------------
+    # Number of persons
+    # -------------------------------------------------
+
+    try:
+
+        persons = int(event.get("persons", 0))
+
+    except (TypeError, ValueError):
+
+        return response(
+            400,
+            "Please enter a valid number of people."
+        )
 
     if persons <= 0:
-        return response(400, "Invalid persons")
+
+        return response(
+            400,
+            "Number of people must be greater than 0."
+        )
+
+    # -------------------------------------------------
+    # Customer name validation
+    # -------------------------------------------------
+
+    customer_name = str(
+        event.get("customerName", "")
+    ).strip()
+
+    if not customer_name:
+
+        return response(
+            400,
+            "Customer name is required."
+        )
+
+    if len(customer_name) > 20:
+
+        return response(
+            400,
+            "Customer name cannot be longer than 20 characters. Please re-enter the name."
+        )
+
+    # -------------------------------------------------
+    # Mobile number validation
+    # -------------------------------------------------
+
+    mobile = str(
+        event.get("mobile", "")
+    ).strip()
+
+    if not re.fullmatch(r"\d{10}", mobile):
+
+        return response(
+            400,
+            "Please provide a valid 10-digit mobile number."
+        )
+
+    # -------------------------------------------------
+    # Check table availability
+    # -------------------------------------------------
 
     free_tables = get_available_tables(slot)
+
+    max_available_persons = get_max_available_persons(
+        free_tables
+    )
+
+    if persons > max_available_persons:
+
+        return response(
+            400,
+            f"Sorry, a reservation for {persons} people is not available. "
+            f"The maximum currently available party size is "
+            f"{max_available_persons}. "
+            f"Please re-enter the number of people."
+        )
+
+    # -------------------------------------------------
+    # Allocate tables
+    # -------------------------------------------------
 
     allocated_tables = allocate_tables(
         persons,
@@ -634,9 +925,14 @@ def book_reservation(event):
     if not allocated_tables:
 
         return response(
-            200,
-            "No tables available for requested slot"
+            400,
+            f"Sorry, no suitable tables are available for "
+            f"{persons} people at {slot}."
         )
+
+    # -------------------------------------------------
+    # Generate booking
+    # -------------------------------------------------
 
     booking_id = generate_booking_id()
 
@@ -645,14 +941,23 @@ def book_reservation(event):
     end_time = get_end_time(slot)
 
     reservation_item = {
+
         "bookingId": booking_id,
+
         "reservationDate": reservation_date,
+
         "slot": slot,
+
         "endSlot": end_time,
+
         "persons": persons,
+
         "customerName": customer_name,
+
         "mobile": mobile,
+
         "tablesAllocated": allocated_tables,
+
         "status": "CONFIRMED"
     }
 
@@ -664,10 +969,15 @@ def book_reservation(event):
         200,
         {
             "bookingId": booking_id,
+
             "reservationDate": reservation_date,
+
             "slot": slot,
+
             "endSlot": end_time,
+
             "tablesAllocated": allocated_tables,
+
             "message": "Reservation Confirmed"
         }
     )

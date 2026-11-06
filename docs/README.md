@@ -127,9 +127,9 @@ Configure the slots exactly as defined in the project, then connect the bot to t
 
 ![Restaurant status intent utterances](./10.%20RestaurantStatus-Intent-Utterances-NoSlots-FulfillmentEnabled.png)
 
-![Book reservation utterances](./11.%20BookReservation-Intent-Utterances-FulfillmentEnabled.png)
+![Book reservation utterances](./11.%20BookReservation-Intent-Utterances-FulfillmentEnabled-CodeHooksChecked.png)
 
-![Book reservation slots](./12.%20BookReservation-Intent-Slots-Advanced-Failure-ElicitSlot.png)
+![Book reservation slots](./12.%20BookReservation-Intent-Slots-Advanced-Failure-ElicitSlot-DialogCodeHooks-InvokeLambda.png)
 
 ![Reschedule reservation utterances](./13.%20RescheduleReservation-Intent-Utterances-FulfillmentEnabled.png)
 
